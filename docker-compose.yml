@@ -1,0 +1,85 @@
+version: "3.8"
+services:
+  #
+  # Holvi
+  #
+
+  holvi-api:
+    build: "./holvi"
+    command: 'bash --login -c "python db_setup.py && python http_api.py"'
+    environment: &holvi_app_env
+      DB_HOSTNAME: "shared-db"
+      DB_USERNAME: "shared"
+      DB_PASSWORD: "shared"
+      DB_DATABASE: "shared"
+      EXPENZY_API_BASE_URL: "http://expenzy-server:5001"
+      RESET_DB: ${RESET_DB}
+      PYTHONUNBUFFERED: true  # so that debug prints are immediately visible
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 5<>/dev/tcp/127.0.0.1/5002 || exit 1"]
+      start_period: 15s
+    ports:
+      - "5002:5002"
+    depends_on:
+      - shared-db
+    networks:
+      - shared-net
+    volumes:
+      - ./holvi/app:/app
+
+  #If you are looking for running a background process, the below might help
+  #holvi-worker:
+  #  build: "./holvi"
+  #  command: 'python worker.py'
+  #  stop_signal: SIGKILL
+  #  environment:
+  #    <<: *holvi_app_env
+  #  depends_on:
+  #    - holvi-api
+  #    - shared-db
+  #  networks:
+  #    - shared-net
+
+  #
+  # Shared
+  #
+
+  # To simplify the setup, let's share the same db for both expenzy and holvi
+  # more realistic would of course be separate database for holvi and expenzy,
+  # running in separate nets
+  shared-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: shared
+      POSTGRES_PASSWORD: shared
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 5<>/dev/tcp/127.0.0.1/5432 || exit 1"]
+      start_period: 10s
+    networks:
+      - shared-net
+
+  #
+  # Expenzy
+  #
+
+  expenzy-server:
+    build: "./expenzy"
+    command: 'bash --login -c "python db_setup.py && gunicorn --enable-stdio-inheritance -k gthread -w 1 --threads $${GUNICORN_THREADS} -b 0.0.0.0:5001 server:app"'
+    environment:
+      CONCURRENCY: 1
+      DB_HOSTNAME: "shared-db"
+      GENERATION_ATTEMPTS: 1
+      GUNICORN_THREADS: 4
+      HOLVI_API_BASE_URL: "http://holvi-api:5002"
+      SLEEP_BETWEEN_PAYOUT: 0.01
+      RESET_DB: ${RESET_DB}
+      PYTHONUNBUFFERED: true  # so that gunicorn debug prints are immediate
+    ports:
+      - "5001:5001"
+    depends_on:
+      - shared-db
+    networks:
+      - shared-net
+
+networks:
+  shared-net: {}  # Setup simplification. More realistic would be one net for expenzy, another for holvi.
