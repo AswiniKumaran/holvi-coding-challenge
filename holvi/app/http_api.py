@@ -2,7 +2,7 @@
 This is the place to implement Holvi's integration!
 """
 import os
-import queue
+from queue import Queue
 
 from flask import Flask
 import threading
@@ -11,10 +11,14 @@ import requests
 from urllib.parse import urljoin
 
 from models import HolviReceivedPayout, HolviPayoutQuery
+from time import sleep
+import logging
+logger = logging.getLogger(__name__)
 
+max_retries = 10
 app = Flask(__name__)
-notifications_to_be_processed = queue.Queue()
-processed_transactions = queue.Queue()
+notifications_to_be_processed = Queue()
+processed_transactions = Queue()
 EXPENZY_API_BASE_URL = os.environ.get("EXPENZY_API_BASE_URL", "127.0.0.1")
 
 def create_database_connection():
@@ -37,6 +41,7 @@ class WebHookHandler:
         return response.json()  # get response's json data convered to Python object
 
     def process_payout_data_in_holvi(self, connection, payout_data):
+        logger.info("Payout has been fetched. Inserting them into the database.")
         for transaction in payout_data:
             self.payout_query.insert(connection=connection, payout = HolviReceivedPayout(
                 expenzy_uuid=transaction['id'],
@@ -44,7 +49,7 @@ class WebHookHandler:
                 recipient_account_identifier=transaction['recipient_account_identifier'],
                 create_time=transaction['create_time'],
             ))
-            processed_transactions.put(transaction)
+            processed_transactions.put((transaction, 0))
 
     @staticmethod
     def update_status_to_expenzy_api(transaction):
@@ -55,42 +60,62 @@ class WebHookHandler:
             urljoin(EXPENZY_API_BASE_URL, f'/api/transaction/{transaction["id"]}/'),
             data=payload,
         )
-        print(response.json())
         response.raise_for_status()
 
+def handle_retry_mechanism(queue, task, current_attempt):
+    logger.info(f"Retrying for {task} for {current_attempt} attempts")
+    if current_attempt < max_retries:
+        sleep(10)
+        queue.put((task, current_attempt + 1))
+    else:
+        logger.error("Too many retries")
+        return
 
 def process_notification():
-    connection = create_database_connection()
     while True:
-        notification = notifications_to_be_processed.get()
+        notification,attempts = notifications_to_be_processed.get()
+        logger.info('Fetching payout data')
+        handler = WebHookHandler(EXPENZY_API_BASE_URL)
+        connection = None
         try:
-            handler = WebHookHandler(EXPENZY_API_BASE_URL)
+            connection = create_database_connection()
             payout_data = handler.get_payout_data()
             payout_data = [i for i in payout_data if i['state'] == 'notifying']
             handler.process_payout_data_in_holvi(connection,payout_data)
             connection.commit_transaction()
+            connection.close()
+        except requests.exceptions.HTTPError as e:
+            if "Server Error" in str(e) and "500" in str(e):
+                logger.exception("Error while processing notification")
+                handle_retry_mechanism(notifications_to_be_processed,notification,attempts)
+            connection.rollback_transaction() if connection else None
         except Exception as e:
-            print(e)
-            connection.rollback_transaction()
+            connection.rollback_transaction() if connection else None
         finally:
             notifications_to_be_processed.task_done()
+            connection.close() if connection else None
 
 def update_transactions():
     while True:
+        transaction,attempts = processed_transactions.get()
+        logger.info(f"Processing transaction {transaction['id']}")
         try:
-            transaction = processed_transactions.get()
             WebHookHandler.update_status_to_expenzy_api(transaction)
+        except requests.exceptions.HTTPError as e:
+            if "Server Error" in str(e) and "500" in str(e):
+                logger.exception(f"Error while updating transaction {transaction['id']}")
+                handle_retry_mechanism(processed_transactions,transaction,attempts)
         except Exception as e:
-            print(e)
+            logger.exception(f"Error while updating transaction {transaction['id']}")
         finally:
             processed_transactions.task_done()
 
 @app.route("/expenzy/webhook/", methods=["GET","POST"])
 def expenzy_webhook():
-    print("Webhook received")
-    notifications_to_be_processed.put("Payout notication webhook received")
+    logger.info("Webhook received")
+    notifications_to_be_processed.put(("Payout notication webhook received", 0))
 
-    # Starting point for core logic - fetch transactions, store them in db, update
+    # Starting point for core logic - fetch transactions, store the m in db, update
     # state to Expenzy, avoiding duplicates and missed ones.
     # 
     # *** To call an API:
