@@ -35,3 +35,18 @@ class HolviPayoutQuery:
             )
         except UniqueViolation as e:
             print(f"Expenzy uuid {payout.expenzy_uuid} already exists")
+
+class FailedTransaction(BaseModel):
+    transaction_uuid: str
+    last_attempted_at: datetime.datetime
+
+class FailedTransactionQuery:
+    def insert(self, connection, failed_attempt: FailedTransaction):
+        try:
+            connection.execute(
+                "INSERT INTO failed_transaction_update(transaction_uuid, last_attempted_at) "
+                "     VALUES (%s, %s)",
+                (failed_attempt.transaction_uuid, failed_attempt.last_attempted_at),
+            )
+        except UniqueViolation as e:
+            print(f"Transaction uuid {uuid} already exists")

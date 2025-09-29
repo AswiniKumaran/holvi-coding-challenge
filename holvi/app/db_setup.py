@@ -13,6 +13,7 @@ db_connection = DBConnection(
 db_connection.begin_transaction()
 if os.getenv("RESET_DB"):
     db_connection.execute("DROP TABLE IF EXISTS holvi_received_payout;")
+    db_connection.execute("DROP TABLE IF EXISTS failed_transaction_update;")
 
 db_connection.execute(
     """
@@ -23,6 +24,16 @@ CREATE TABLE IF NOT EXISTS holvi_received_payout(
     amount numeric(16, 2) not null,
     recipient_account_identifier varchar(20) not null
 );
+"""
+)
+
+db_connection.execute(
+    """
+    CREATE TABLE IF NOT EXISTS failed_transaction_update(
+    id serial primary key,
+    transaction_id uuid not null unique,
+    last_attempted_at timestamptz not null
+);    
 """
 )
 db_connection.commit_transaction()
