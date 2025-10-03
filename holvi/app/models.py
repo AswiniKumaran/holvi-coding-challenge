@@ -37,7 +37,7 @@ class HolviPayoutQuery:
             print(f"Expenzy uuid {payout.expenzy_uuid} already exists")
 
 class FailedTransaction(BaseModel):
-    transaction_uuid: str
+    transaction_uuid: uuid.UUID
     last_attempted_at: datetime.datetime
 
 class FailedTransactionQuery:
