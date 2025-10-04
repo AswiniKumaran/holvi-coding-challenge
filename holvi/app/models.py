@@ -44,7 +44,7 @@ class FailedTransactionQuery:
     def insert(self, connection, failed_attempt: FailedTransaction):
         try:
             connection.execute(
-                "INSERT INTO failed_transaction_update(transaction_uuid, last_attempted_at) "
+                "INSERT INTO failed_transaction_update(transaction_id, last_attempted_at) "
                 "     VALUES (%s, %s)",
                 (failed_attempt.transaction_uuid, failed_attempt.last_attempted_at),
             )

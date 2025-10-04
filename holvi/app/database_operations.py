@@ -1,18 +1,22 @@
 import os
-from typing import Union
+from typing import Union, TypeVar
 from abc import ABC, abstractmethod
 from psycopg_pool import ConnectionPool
 import logging
 from datetime import datetime
+from uuid import UUID
+from psycopg import Connection
 
-from psycopg_pool.abc import CT
-
-from models import HolviReceivedPayout, FailedTransaction
+from models import HolviReceivedPayout, FailedTransaction, HolviPayoutQuery, FailedTransactionQuery
 
 logger = logging.getLogger(__name__)
-class HandleDBOperation(ABC):
-    connection_pool:Union[ConnectionPool, None] = None
-    def __init__(self, query):
+T = TypeVar('T')
+
+
+class DBOperationHandler(ABC):
+    connection_pool: Union[ConnectionPool, None] = None
+
+    def __init__(self, query: Union[HolviPayoutQuery, FailedTransactionQuery]) -> None:
         self.query = query
 
     @classmethod
@@ -26,13 +30,13 @@ class HandleDBOperation(ABC):
         try:
             connection_pool = ConnectionPool(conninfo=connection_info)
             logger.info(f"Connection pool created for {connection_info}")
-            HandleDBOperation.connection_pool = connection_pool
+            DBOperationHandler.connection_pool = connection_pool
             return connection_pool
         except Exception as e:
             logger.exception(f"Failed to create database connection pool: {e}")
             raise e
 
-    def perform_db_operation(self, transaction: dict, last_attempted=None):
+    def perform_db_operation(self, transaction: Union[HolviReceivedPayout, UUID], last_attempted: datetime = None):
         if not self.connection_pool:
             raise RuntimeError("No database connection pool created")
         with self.connection_pool.connection() as connection:
@@ -44,31 +48,34 @@ class HandleDBOperation(ABC):
                 raise e
 
     @abstractmethod
-    def perform(self, transaction: dict, connection: CT, last_attempted_at: Union[datetime, None] = None):
+    def perform(self, transaction: T, connection: Connection,
+                last_attempted_at: Union[datetime, None] = None):
         pass
 
 
-class AddHolviTransaction(HandleDBOperation):
-    def perform(self, transaction, connection, last_attempted_at=None):
+class AddHolviTransaction(DBOperationHandler):
+    def perform(self, transaction: HolviReceivedPayout, connection: Connection,
+                last_attempted_at: Union[datetime, None] = None):
         try:
             self.query.insert(connection=connection, payout=HolviReceivedPayout(
-                expenzy_uuid=transaction['id'],
-                amount=transaction['amount'],
-                recipient_account_identifier=transaction['recipient_account_identifier'],
-                create_time=transaction['create_time'],
+                expenzy_uuid=transaction.expenzy_uuid,
+                amount=transaction.amount,
+                recipient_account_identifier=transaction.recipient_account_identifier,
+                create_time=transaction.create_time,
             ))
         except Exception as e:
-            logger.exception(f"Failed to add Holvi transaction {transaction['id']}: {e}")
+            logger.exception(f"Failed to add Holvi transaction {transaction.expenzy_uuid}: {e}")
 
 
-class AddFailedTransaction(HandleDBOperation):
-    def perform(self, transaction, connection, last_attempted_at=None):
-        assert last_attempted_at is not None
+class AddFailedTransaction(DBOperationHandler):
+    def perform(self, transaction: UUID, connection: Connection,
+                last_attempted_at: Union[datetime, None] = None):
+        if not last_attempted_at:
+            raise ValueError('last_attempted_at cannot be None')
         try:
             self.query.insert(connection=connection, payout=FailedTransaction(
-                transaction_uuid=transaction['id'],
+                transaction_uuid=transaction,
                 last_attempted_at=last_attempted_at,
             ))
         except Exception as e:
-            logger.exception(f"Failed to add failed transaction {transaction['id']}: {e}")
-
+            logger.exception(f"Failed to add failed transaction_id {transaction}: {e}")
