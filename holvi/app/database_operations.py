@@ -71,7 +71,10 @@ class AddFailedTransaction(DBOperationHandler):
     def perform(self, transaction: UUID, connection: Connection,
                 last_attempted_at: Union[datetime, None] = None):
         if not last_attempted_at:
-            raise ValueError('last_attempted_at cannot be None')
+            logger.warning(
+                f"last_attempted_at missing for id {transaction}; defaulting to current time"
+            )
+            last_attempted_at = datetime.now()
         try:
             self.query.insert(connection=connection, payout=FailedTransaction(
                 transaction_uuid=transaction,

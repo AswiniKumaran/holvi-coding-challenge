@@ -4,7 +4,9 @@ from decimal import Decimal
 
 from psycopg.errors import UniqueViolation
 from pydantic import BaseModel, field_validator
+import logging
 
+logger = logging.getLogger(__name__)
 
 class HolviReceivedPayout(BaseModel):
     expenzy_uuid: uuid.UUID
@@ -49,4 +51,4 @@ class FailedTransactionQuery:
                 (failed_attempt.transaction_uuid, failed_attempt.last_attempted_at),
             )
         except UniqueViolation as e:
-            print(f"Transaction uuid {uuid} already exists")
+            logger.warning(f"Transaction uuid {uuid} already exists")

@@ -27,6 +27,8 @@ EXPENZY_API_BASE_URL = os.environ.get("EXPENZY_API_BASE_URL", "127.0.0.1")
 notifications_to_be_processed = InMemoryQueue()
 processed_transactions = InMemoryQueue()
 
+response_codes_to_retry = [408, 429, 500, 502, 503, 504]
+
 class WebHookHandler:
     def __init__(self, expenzy_api_base_url: str) -> None:
         self.expenzy_api_base_url = expenzy_api_base_url
@@ -86,8 +88,10 @@ def process_notification(notifications_to_be_processed: Queue, handler: WebHookH
             payout_data = [i for i in payout_data if i['state'] == 'notifying']
             handler.process_payout_data_in_holvi(payout_data)
         except requests.exceptions.HTTPError as e:
-            if "Server Error" in str(e) and "500" in str(e):
+            status_code = e.response.status_code
+            if "Server Error" in str(e) and status_code in response_codes_to_retry:
                 logger.exception("Server Error while processing notification")
+                # special handling needed for status codes 408 & 429
                 handle_retry_mechanism(notifications_to_be_processed, notification, attempts, handler)
         except Exception as e:
             logger.exception("Unexpected Error while processing notification")
@@ -102,8 +106,10 @@ def update_transactions(processed_transactions: Queue, handler: WebHookHandler) 
         try:
             handler.update_status_to_expenzy_api(transaction_id)
         except requests.exceptions.HTTPError as e:
-            if "Server Error" in str(e) and "500" in str(e):
+            status_code = e.response.status_code
+            if "Server Error" in str(e) and status_code in response_codes_to_retry:
                 logger.exception(f"Error while updating transaction {transaction_id}")
+                # special handling needed for status codes 408 & 429
                 handle_retry_mechanism(processed_transactions, transaction_id, attempts, handler, persist_to_db=True)
         except Exception as e:
             logger.exception(f"Error while updating transaction {transaction_id}")
