@@ -3,3 +3,4 @@ venv/
 holvi/app/__pycache__/
 *.pyc
 holvi/.DS_Store
+__MACOSX/
